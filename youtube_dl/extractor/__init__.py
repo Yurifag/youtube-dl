@@ -340,6 +340,7 @@ from .karrierevideos import KarriereVideosIE
 from .keezmovies import KeezMoviesIE
 from .khanacademy import KhanAcademyIE
 from .kickstarter import KickStarterIE
+from .kissanime import KissAnimeIE
 from .keek import KeekIE
 from .konserthusetplay import KonserthusetPlayIE
 from .kontrtube import KontrTubeIE
