@@ -15,9 +15,10 @@ youtube-dl - download videos from youtube.com or other video platforms
 
 # DEPENDENCIES
 
-- PyExecJS
+- PyExecJS  
+
 To install PyExecJS, type:
-    
+
     sudo pip install PyExecJS
 
 # INSTALLATION
