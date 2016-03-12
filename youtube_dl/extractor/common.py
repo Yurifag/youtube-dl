@@ -23,6 +23,7 @@ from ..compat import (
     compat_urllib_error,
     compat_urllib_parse,
     compat_urlparse,
+    compat_urllib_request
 )
 from ..utils import (
     NO_DEFAULT,
@@ -51,6 +52,10 @@ from ..utils import (
     update_url_query,
 )
 
+import execjs
+import cookielib
+import urllib
+import urllib2
 
 class InfoExtractor(object):
     """Information Extractor class.
@@ -346,6 +351,64 @@ class InfoExtractor(object):
     def IE_NAME(self):
         return compat_str(type(self).__name__[:-2])
 
+    def _scrape_cloudflare(self, request_or_url):
+        opener = compat_urllib_request.build_opener(compat_urllib_request.HTTPCookieProcessor(compat_cookiejar.CookieJar()))
+
+        url = request_or_url if type(request_or_url) is unicode else request_or_url.get_full_url()
+        headers = {} if type(request_or_url) is unicode else request_or_url.headers.copy()
+        headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:40.0) Gecko/20100101 Firefox/40.1'
+
+        request = compat_urllib_request.Request(url, headers=headers)
+
+        host = request.get_host()
+        protocol = request.get_type()
+
+        try:
+            response = opener.open(request)
+        except(compat_urllib_error.URLError, compat_http_client.HTTPException, socket.error) as err:
+            body = err.fp.read()
+
+            jsChlVc = re.findall(r'name="jschl_vc" value="(\w+)"', body)
+            if not jsChlVc:
+                raise ExtractorError('Can\'t extract challengeId (jschl_vc) from page')
+            jsChlVc = jsChlVc[0]
+
+            challenge_pass = re.findall(r'name="pass" value="(.+?)"', body)
+            if not challenge_pass:
+                raise ExtractorError('Can\'t extract cloudflare pass string')
+            challenge_pass = challenge_pass[0]
+
+            challenge = re.findall(r"getElementById\('cf-content'\)[\s\S]+?setTimeout.+?\r?\n([\s\S]+?a\.value =.+?)\r?\n", body, re.I)
+            if not challenge:
+                raise ExtractorError('Can\'t extract method from setTimeout function')
+            challenge = challenge[0]
+
+            challenge = re.sub(r'a\.value =(.+?) \+ .+?;', 'return \g<1>', challenge)
+            challenge = re.sub(r'\s{3,}[a-z](?: = |\.).+', '', challenge)
+
+            try:
+                jschl_answer = str(execjs.exec_(challenge) + len(host))
+            except err:
+                raise ExtractorError('Failed to evaluate cloudflare javascript', cause=err)
+
+            answerUrl = protocol + '://' + host + '/cdn-cgi/l/chk_jschl'
+
+            params = urllib.urlencode({
+              'jschl_vc': jsChlVc,
+              'jschl_answer': jschl_answer,
+              'pass': challenge_pass
+            })
+
+            headers['Referer'] = url
+
+            time.sleep(5)
+            answer = compat_urllib_request.Request(answerUrl + '?' + params, headers=headers)
+            try:
+                response = opener.open(answer)
+            except(compat_urllib_error.URLError, compat_http_client.HTTPException, socket.error) as err:
+                return False
+        return response
+
     def _request_webpage(self, url_or_request, video_id, note=None, errnote=None, fatal=True, data=None, headers=None, query=None):
         """ Returns the response handle """
         if note is None:
@@ -364,6 +427,10 @@ class InfoExtractor(object):
         try:
             return self._downloader.urlopen(url_or_request)
         except (compat_urllib_error.URLError, compat_http_client.HTTPException, socket.error) as err:
+            if('URL=/cdn-cgi/' in err.headers.get('Refresh', '') and err.headers.get('Server', '') == 'cloudflare-nginx'):
+                response = self._scrape_cloudflare(url_or_request)
+                if(response is not False):
+                    return response
             if errnote is False:
                 return False
             if errnote is None:
